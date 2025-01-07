@@ -12,7 +12,7 @@ def dilate_with_buffer(image, buffer_radius=5):
     kernel = np.ones((buffer_radius, buffer_radius), np.uint8)
     return cv2.dilate(image, kernel, iterations=1)
 
-def detect_centerline(image, orientation="vertical", buffer_radius=5):
+def detect_centerline(image, orientation="vertical", buffer_radius=5, merge_threshold=10):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = apply_gaussian_blur(gray)
     edges = canny_edge_detection(blurred)
@@ -23,22 +23,42 @@ def detect_centerline(image, orientation="vertical", buffer_radius=5):
     lines = cv2.HoughLinesP(dilated_edges, 1, np.pi / 180, 100, minLineLength=100, maxLineGap=10)
     if lines is not None:
         relevant_lines = []
+
+        # Filter and merge lines based on orientation
         for line in lines:
             x1, y1, x2, y2 = line[0]
             if orientation == "vertical" and abs(x2 - x1) < abs(y2 - y1):
-                relevant_lines.append(((x1 + x2) // 2, abs(y2 - y1)))
+                mid_x = (x1 + x2) // 2
+                length = abs(y2 - y1)
+                relevant_lines.append((mid_x, length))
             elif orientation == "horizontal" and abs(y2 - y1) < abs(x2 - x1):
-                relevant_lines.append(((y1 + y2) // 2, abs(x2 - x1)))
+                mid_y = (y1 + y2) // 2
+                length = abs(x2 - x1)
+                relevant_lines.append((mid_y, length))
 
-        if relevant_lines:
+        # Merge closely spaced lines
+        merged_lines = []
+        relevant_lines.sort()  # Sort by position (x or y depending on orientation)
+        for pos, length in relevant_lines:
+            if not merged_lines or abs(pos - merged_lines[-1][0]) > merge_threshold:
+                merged_lines.append((pos, length))
+            else:
+                # Merge by taking the weighted average position and cumulative length
+                prev_pos, prev_length = merged_lines[-1]
+                total_length = prev_length + length
+                new_pos = int((prev_pos * prev_length + pos * length) / total_length)
+                merged_lines[-1] = (new_pos, total_length)
+
+        # Calculate centerline if enough distinct lines are present
+        if len(merged_lines) > 1:
             if orientation == "vertical":
-                weighted_sum = sum(x * length for x, length in relevant_lines)
-                total_length = sum(length for _, length in relevant_lines)
+                weighted_sum = sum(x * length for x, length in merged_lines)
+                total_length = sum(length for _, length in merged_lines)
                 center_x = int(weighted_sum / total_length) if total_length > 0 else image.shape[1] // 2
                 cv2.line(line_image, (center_x, 0), (center_x, line_image.shape[0]), (0, 0, 255), 2)
             elif orientation == "horizontal":
-                weighted_sum = sum(y * length for y, length in relevant_lines)
-                total_length = sum(length for _, length in relevant_lines)
+                weighted_sum = sum(y * length for y, length in merged_lines)
+                total_length = sum(length for _, length in merged_lines)
                 if total_length > 0:
                     center_y = int(weighted_sum / total_length)
                 else:
@@ -46,6 +66,7 @@ def detect_centerline(image, orientation="vertical", buffer_radius=5):
                 cv2.line(line_image, (0, center_y), (line_image.shape[1], center_y), (0, 0, 255), 2)
 
     return line_image
+
 
 # Resize function to ensure all frames are the same size
 def resize_frame(frame):
