@@ -12,31 +12,40 @@ def dilate_with_buffer(image, buffer_radius=5):
     kernel = np.ones((buffer_radius, buffer_radius), np.uint8)
     return cv2.dilate(image, kernel, iterations=1)
 
-def detect_centerline(image, orientation="vertical", buffer_radius=5, merge_threshold=10):
+def detect_centerline_with_improvements(image, orientation="vertical", buffer_radius=5, merge_threshold=50):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = apply_gaussian_blur(gray)
     edges = canny_edge_detection(blurred)
     dilated_edges = dilate_with_buffer(edges, buffer_radius)
 
+    debug_image = image.copy()  # For visualizing raw detected lines
     line_image = image.copy()
 
+    # Detect lines using Hough Transform
     lines = cv2.HoughLinesP(dilated_edges, 1, np.pi / 180, 100, minLineLength=100, maxLineGap=10)
-    if lines is not None:
-        relevant_lines = []
 
-        # Filter and merge lines based on orientation
+    if lines is not None:
+        # Visualize detected lines
         for line in lines:
             x1, y1, x2, y2 = line[0]
-            if orientation == "vertical" and abs(x2 - x1) < abs(y2 - y1):
+            cv2.line(debug_image, (x1, y1), (x2, y2), (255, 255, 0), 2)  # Cyan lines for visualization
+
+        cv2.imshow("Raw Detected Lines", debug_image)
+
+        # Filter and process lines based on orientation
+        relevant_lines = []
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            if orientation == "vertical" and abs(x2 - x1) < abs(y2 - y1):  # Vertical condition
                 mid_x = (x1 + x2) // 2
                 length = abs(y2 - y1)
                 relevant_lines.append((mid_x, length))
-            elif orientation == "horizontal" and abs(y2 - y1) < abs(x2 - x1):
+            elif orientation == "horizontal" and abs(y2 - y1) < abs(x2 - x1):  # Horizontal condition
                 mid_y = (y1 + y2) // 2
                 length = abs(x2 - x1)
                 relevant_lines.append((mid_y, length))
 
-        # Merge closely spaced lines
+        # Merge lines that are within the merge_threshold
         merged_lines = []
         relevant_lines.sort()  # Sort by position (x or y depending on orientation)
         for pos, length in relevant_lines:
@@ -49,13 +58,22 @@ def detect_centerline(image, orientation="vertical", buffer_radius=5, merge_thre
                 new_pos = int((prev_pos * prev_length + pos * length) / total_length)
                 merged_lines[-1] = (new_pos, total_length)
 
-        # Calculate centerline if enough distinct lines are present
+        # Visualize merged lines for debugging
+        merged_image = line_image.copy()
+        for pos, _ in merged_lines:
+            if orientation == "vertical":
+                cv2.line(merged_image, (pos, 0), (pos, merged_image.shape[0]), (0, 255, 0), 2)  # Green for merged lines
+            elif orientation == "horizontal":
+                cv2.line(merged_image, (0, pos), (merged_image.shape[1], pos), (0, 255, 0), 2)  # Green for merged lines
+        cv2.imshow("Merged Lines", merged_image)
+
+        # Calculate and draw the centerline
         if len(merged_lines) > 1:
             if orientation == "vertical":
                 weighted_sum = sum(x * length for x, length in merged_lines)
                 total_length = sum(length for _, length in merged_lines)
                 center_x = int(weighted_sum / total_length) if total_length > 0 else image.shape[1] // 2
-                cv2.line(line_image, (center_x, 0), (center_x, line_image.shape[0]), (0, 0, 255), 2)
+                cv2.line(line_image, (center_x, 0), (center_x, line_image.shape[0]), (0, 0, 255), 2)  # Red centerline
             elif orientation == "horizontal":
                 weighted_sum = sum(y * length for y, length in merged_lines)
                 total_length = sum(length for _, length in merged_lines)
@@ -63,8 +81,10 @@ def detect_centerline(image, orientation="vertical", buffer_radius=5, merge_thre
                     center_y = int(weighted_sum / total_length)
                 else:
                     center_y = image.shape[0] // 2
-                cv2.line(line_image, (0, center_y), (line_image.shape[1], center_y), (0, 0, 255), 2)
+                cv2.line(line_image, (0, center_y), (line_image.shape[1], center_y), (0, 0, 255), 2)  # Red centerline
 
+    # Display the final result
+    cv2.imshow("Final Line Detection", line_image)
     return line_image
 
 
