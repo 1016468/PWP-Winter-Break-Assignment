@@ -103,10 +103,10 @@ def main():
 
         frame_resized = resize_frame(frame)
 
-        # Dynamically calculate cropping dimensions for shorter width and longer height
+        # Dynamically calculate cropping dimensions for a smaller box with the same ratio
         frame_height, frame_width = frame_resized.shape[:2]
-        crop_width = int(frame_width * 0.5)  # Reduce width to 50% of the resized frame
-        crop_height = int(frame_height * 0.9)  # Increase height to 90% of the resized frame
+        crop_width = int(frame_width * 0.4)  # Reduce width to 40% of the resized frame
+        crop_height = int(frame_height * 0.72)  # Reduce height proportionally to maintain the 5:9 ratio
         x_start = (frame_width - crop_width) // 2
         y_start = (frame_height - crop_height) // 2
         cropped_frame = frame_resized[y_start:y_start+crop_height, x_start:x_start+crop_width]
