@@ -12,80 +12,83 @@ def dilate_with_buffer(image, buffer_radius=5):
     kernel = np.ones((buffer_radius, buffer_radius), np.uint8)
     return cv2.dilate(image, kernel, iterations=1)
 
-def detect_centerline_with_improvements(image, orientation="vertical", buffer_radius=5, merge_threshold=50):
+def detect_centerline(image, buffer_radius=5, flipped=False):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = apply_gaussian_blur(gray)
     edges = canny_edge_detection(blurred)
     dilated_edges = dilate_with_buffer(edges, buffer_radius)
 
-    debug_image = image.copy()  # For visualizing raw detected lines
+    # Detect lines using Hough Transform
+    lines = cv2.HoughLinesP(dilated_edges, 1, np.pi / 180, 100, minLineLength=100, maxLineGap=50)
     line_image = image.copy()
 
-    # Detect lines using Hough Transform
-    lines = cv2.HoughLinesP(dilated_edges, 1, np.pi / 180, 100, minLineLength=100, maxLineGap=10)
-
     if lines is not None:
-        # Visualize detected lines
+        line_segments = []
         for line in lines:
             x1, y1, x2, y2 = line[0]
-            cv2.line(debug_image, (x1, y1), (x2, y2), (255, 255, 0), 2)  # Cyan lines for visualization
-
-        cv2.imshow("Raw Detected Lines", debug_image)
-
-        # Filter and process lines based on orientation
-        relevant_lines = []
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            if orientation == "vertical" and abs(x2 - x1) < abs(y2 - y1):  # Vertical condition
-                mid_x = (x1 + x2) // 2
-                length = abs(y2 - y1)
-                relevant_lines.append((mid_x, length))
-            elif orientation == "horizontal" and abs(y2 - y1) < abs(x2 - x1):  # Horizontal condition
-                mid_y = (y1 + y2) // 2
-                length = abs(x2 - x1)
-                relevant_lines.append((mid_y, length))
-
-        # Merge lines that are within the merge_threshold
-        merged_lines = []
-        relevant_lines.sort()  # Sort by position (x or y depending on orientation)
-        for pos, length in relevant_lines:
-            if not merged_lines or abs(pos - merged_lines[-1][0]) > merge_threshold:
-                merged_lines.append((pos, length))
+            # Calculate slope to identify vertical-like or horizontal-like lines
+            slope = (y2 - y1) / (x2 - x1 + 1e-6)  # Add small epsilon to avoid division by zero
+            if not flipped:
+                # Filter lines with steep slopes (vertical-like)
+                if 0.5 < abs(slope):  
+                    line_segments.append(((x1, y1), (x2, y2)))
             else:
-                # Merge by taking the weighted average position and cumulative length
-                prev_pos, prev_length = merged_lines[-1]
-                total_length = prev_length + length
-                new_pos = int((prev_pos * prev_length + pos * length) / total_length)
-                merged_lines[-1] = (new_pos, total_length)
+                # For flipped paper, we want to find near-horizontal lines
+                if abs(slope) < 0.5:  
+                    line_segments.append(((x1, y1), (x2, y2)))
 
-        # Visualize merged lines for debugging
-        merged_image = line_image.copy()
-        for pos, _ in merged_lines:
-            if orientation == "vertical":
-                cv2.line(merged_image, (pos, 0), (pos, merged_image.shape[0]), (0, 255, 0), 2)  # Green for merged lines
-            elif orientation == "horizontal":
-                cv2.line(merged_image, (0, pos), (merged_image.shape[1], pos), (0, 255, 0), 2)  # Green for merged lines
-        cv2.imshow("Merged Lines", merged_image)
+        # Sort by x-coordinates to find left and right lines
+        left_lines = []
+        right_lines = []
+        for (x1, y1), (x2, y2) in line_segments:
+            mid_x = (x1 + x2) // 2
+            if mid_x < image.shape[1] // 2:
+                left_lines.append(((x1, y1), (x2, y2)))
+            else:
+                right_lines.append(((x1, y1), (x2, y2)))
 
-        # Calculate and draw the centerline
-        if len(merged_lines) > 1:
-            if orientation == "vertical":
-                weighted_sum = sum(x * length for x, length in merged_lines)
-                total_length = sum(length for _, length in merged_lines)
-                center_x = int(weighted_sum / total_length) if total_length > 0 else image.shape[1] // 2
-                cv2.line(line_image, (center_x, 0), (center_x, line_image.shape[0]), (0, 0, 255), 2)  # Red centerline
-            elif orientation == "horizontal":
-                weighted_sum = sum(y * length for y, length in merged_lines)
-                total_length = sum(length for _, length in merged_lines)
-                if total_length > 0:
-                    center_y = int(weighted_sum / total_length)
-                else:
-                    center_y = image.shape[0] // 2
-                cv2.line(line_image, (0, center_y), (line_image.shape[1], center_y), (0, 0, 255), 2)  # Red centerline
+        # Average the left and right lines
+        def average_line(lines):
+            if not lines:
+                return None
+            x1_avg = int(sum(line[0][0] for line in lines) / len(lines))
+            y1_avg = int(sum(line[0][1] for line in lines) / len(lines))
+            x2_avg = int(sum(line[1][0] for line in lines) / len(lines))
+            y2_avg = int(sum(line[1][1] for line in lines) / len(lines))
+            return (x1_avg, y1_avg), (x2_avg, y2_avg)
 
-    # Display the final result
-    cv2.imshow("Final Line Detection", line_image)
+        left_line = average_line(left_lines)
+        right_line = average_line(right_lines)
+
+        # Draw the left and right lines
+        if left_line:
+            cv2.line(line_image, left_line[0], left_line[1], (255, 0, 0), 2)  # Blue for left
+        if right_line:
+            cv2.line(line_image, right_line[0], right_line[1], (0, 255, 0), 2)  # Green for right
+
+        # Calculate and draw centerline
+        if left_line and right_line:
+            # Interpolate centerline as the midpoint between the left and right lines
+            for y in range(image.shape[0]):
+                try:
+                    if not flipped:
+                        # Calculate centerline for vertical case
+                        left_x = int(left_line[0][0] + (y - left_line[0][1]) * (left_line[1][0] - left_line[0][0]) / (left_line[1][1] - left_line[0][1] + 1e-6))
+                        right_x = int(right_line[0][0] + (y - right_line[0][1]) * (right_line[1][0] - right_line[0][0]) / (right_line[1][1] - right_line[0][1] + 1e-6))
+                    else:
+                        # Calculate centerline for horizontal case (flipped paper)
+                        left_y = int(left_line[0][1] + (x - left_line[0][0]) * (left_line[1][1] - left_line[0][1]) / (left_line[1][0] - left_line[0][0] + 1e-6))
+                        right_y = int(right_line[0][1] + (x - right_line[0][0]) * (right_line[1][1] - right_line[0][1]) / (right_line[1][0] - right_line[0][0] + 1e-6))
+                    center_x = (left_x + right_x) // 2
+                    center_y = (left_y + right_y) // 2
+                    cv2.circle(line_image, (center_x, center_y), 1, (0, 0, 255), -1)  # Red dots for centerline
+                except Exception as e:
+                    pass
+
+    # Display results
+    cv2.imshow("Final Line Detection with Perspective", line_image)
     return line_image
+
 
 
 # Resize function to ensure all frames are the same size
