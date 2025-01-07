@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-# Helper functions for processing video feed and detecting centerline
+# Functions that use the basic OpenCv functions to help detect things within the image
 def apply_gaussian_blur(image, kernel_size=(5, 5)):
     return cv2.GaussianBlur(image, kernel_size, 0)
 
@@ -95,7 +95,7 @@ def draw_parallel_lines(image, orientation="vertical"):
 
 # Video streaming function
 def main():
-    cap = cv2.VideoCapture(0)  # Use the first available camera
+    cap = cv2.VideoCapture(0)  
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -108,14 +108,14 @@ def main():
         frame_height, frame_width = frame_resized.shape[:2]
 
         # Define the desired width and height for the cropping box
-        box_width = 400  # Adjust the width as needed
-        box_height = 400  # Adjust the height as needed
+        box_width = 400  
+        box_height = 400  
 
-        # Calculate the top-left corner for centering the crop
+        # Calculate centering for cropping
         x = (frame_width - box_width) // 2
         y = (frame_height - box_height) // 2
 
-        # Crop the frame with the new, larger, and centered box
+        # Crop the frame 
         cropped_frame = frame_resized[y:y + box_height, x:x + box_width]
 
         # Check if the lines in the image are more horizontal or vertical
